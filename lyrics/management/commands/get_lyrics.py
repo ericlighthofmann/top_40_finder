@@ -5,43 +5,51 @@ import bs4
 from datetime import datetime, timedelta
 import time
 from tqdm import tqdm
+from lyrics.models import Song, Artist
 
 class Command(BaseCommand):
     def handle(self, *args, **options):
 
-        #http://top40-charts.com/chart.php?cid=27&date=2017-07-22
-
-        #get song artist, name from top 40 site
-        def getArtistSong(PageUrl, date):
-            res = requests.get(PageUrl)
-            res.raise_for_status()
-            soup = bs4.BeautifulSoup(res.text, 'html.parser')
-            #gets all song names and saves to database
-            for ana in soup.findAll('tr', {'class':'latc_song'}):
-                for a in ana.findAll('a'):
-                    if a.text != '' and a.text != None:
-                        if 'song' in a['href']:
-                            song = a.text
-                        elif 'artist' in a['href']:
-                            artist = a.text
-                Artist.objects.update_or_create(name=artist)
-                Song.objects.update_or_create(artist=Artist.objects.get(name=artist), name=song, defaults={'date':date})
-
-        #gets all dates from dropdown
-        date_list = []
-        res = requests.get('http://top40-charts.com/chart.php?cid=27')
-        res.raise_for_status()
-        soup = bs4.BeautifulSoup(res.text, 'html.parser')
-        options = soup.find("select", {"name":"date"})
-        for o in options.findAll('option'):
-            date = datetime.strptime(o.text, '%d-%m-%Y').date()
-            date_list.append(date)
-
-        #scrapes all top 40 songs and artists using the dates in date_list
-        for date in tqdm(date_list):
-            time.sleep(2)
+        all_songs = Song.objects.all()
+        error_counter = 0
+        def format_song(song):
+            punctuation = ['?', ':', ';', '.', '!', '/', '\"', '\'', '&', '*']
+            song = song.lower().replace(' ', '-').replace('\n', '')
+            song = ''.join(c for c in song if c not in punctuation)
+            return song
+        def format_artist(artist):
+            punctuation = ['?', ':', ';', '.', '!', '/', '\"', '\'', '&', '*']
+            artist = artist.lower().replace(' ', '-').replace('\n', '')
+            artist = ''.join(c for c in artist if c not in punctuation)
+            return artist
+        def getArtistSong(url, artist_name, song_name, artist_fk, song_fk, error_counter):
             try:
-                getArtistSong('http://top40-charts.com/chart.php?cid=27' + '&date=' + str(date), date)
-            except:
-                time.sleep(60)
-                getArtistSong('http://top40-charts.com/chart.php?cid=27' + '&date=' + str(date), date)
+                res = requests.get(url)
+                res.raise_for_status()
+            except Exception as e:
+                error_counter += 1
+                pass
+            soup = bs4.BeautifulSoup(res.text, 'html.parser')
+            #gets all song lyrics and saves to db
+            lyrics = ''
+            for ana in soup.findAll('p', class_='verse'):
+                if ana.text != 'about' and ana.text != 'site map':
+                    lyrics += (' ' + ana.text.replace('\ br', '').replace('\n', ' '))
+                    #print (lyrics)
+            Lyrics.objects.update_or_create\
+            (
+            artist=artist_fk, song=song_fk, \
+            defaults={'lyrics': lyrics}
+            )
+
+        for song in tqdm(all_songs):
+            time.sleep(1)
+            song_fk = song
+            artist_fk = song.artist
+            song_name = format_song(song.name)
+            artist_name = format_artist(song.artist.name)
+            #print (song_name, artist_name)
+            getArtistSong('http://www.metrolyrics.com/' + song_name\
+             + '-lyrics-' + artist_name + '.html', song_name, artist_name, artist_fk, song_fk, error_counter)
+
+        print ('You had a ' + str(error_count/all_songs.count()*100) + ' success rate.')
